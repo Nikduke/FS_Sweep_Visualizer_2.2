@@ -35,6 +35,7 @@ EXPORT_LEGEND_SAMPLE_GAP_PX = 8
 EXPORT_LEGEND_TEXT_PAD_PX = 8
 EXPORT_LEGEND_ENTRY_SAFETY_FACTOR = 1.10
 EXPORT_LEGEND_ROW_HEIGHT_FACTOR = 1.60  # row height ~= font_size * factor
+AUTO_WIDTH_ESTIMATE_PX = 950  # Used to estimate legend wrapping when "Auto width" is enabled (smaller => safer, avoids clipping).
 WEB_LEGEND_MAX_HEIGHT_PX = 500  # Max legend area reserved in the web view (px); prevents overlap with the next chart.
 
 
@@ -286,8 +287,12 @@ def apply_common_layout(
     # - the plot area stays exactly `plot_height`
     # - the legend never draws outside the figure (overlapping the next chart)
     # - if legend is larger than the cap, Plotly shows an internal scrollbar
-    est_width_px = int(figure_width_px) if not use_auto_width else int(DEFAULT_FIGURE_WIDTH_PX)
+    # NOTE: when using auto-width, Python doesn't know the real pixel width. Use a conservative
+    # estimate so we allocate more legend height (avoid clipping/overlap).
+    est_width_px = int(figure_width_px) if not use_auto_width else int(AUTO_WIDTH_ESTIMATE_PX)
     legend_h_full = _estimate_legend_height_px(int(n_traces), est_width_px, int(legend_entrywidth))
+    # Option 2 (web): cap reserved legend area to avoid huge blank gaps between plots.
+    # When the legend exceeds this cap, Plotly may show an internal legend scrollbar.
     legend_h = min(int(WEB_LEGEND_MAX_HEIGHT_PX), int(legend_h_full))
     total_height = int(plot_height) + int(TOP_MARGIN_PX) + int(BOTTOM_AXIS_PX) + int(legend_h)
     # Put the legend in the bottom margin so the plot area stays exactly `plot_height`.
@@ -920,6 +925,45 @@ def main():
     if xr_total > 0 and xr_dropped > 0:
         st.caption(f"X/R: dropped {xr_dropped} of {xr_total} points where |R| < 1e-9 or data missing.")
 
+    # Top download buttons (controls remain in the sidebar).
+    enable_browser_export = bool(st.session_state.get("export_fulllegend_enable_browser", True))
+    export_x = bool(st.session_state.get("export_fulllegend_x", True))
+    export_r = bool(st.session_state.get("export_fulllegend_r", False))
+    export_xr = bool(st.session_state.get("export_fulllegend_xr", False))
+    export_manual_legend = bool(st.session_state.get("export_fulllegend_manual_legend", True))
+    export_legend_font_size_px = int(st.session_state.get("export_fulllegend_font_size_px", EXPORT_LEGEND_FONT_SIZE_PX_DEFAULT))
+    export_scale = 4
+    export_width_px = int(figure_width_px) if not use_auto_width else -1
+
+    if enable_browser_export:
+        selections = []
+        if export_x:
+            selections.append(("Download X PNG (full legend)", fig_x, "X_full_legend.png", 0))
+        if export_r:
+            selections.append(("Download R PNG (full legend)", fig_r, "R_full_legend.png", 1))
+        if export_xr:
+            selections.append(("Download X/R PNG (full legend)", fig_xr, "X_over_R_full_legend.png", 2))
+        if not selections:
+            st.warning("Select at least one plot to export.")
+        else:
+            cols = st.columns(len(selections))
+            for col, (label, fig_src, fname, idx) in zip(cols, selections):
+                with col:
+                    fig_export = _build_export_figure(fig_src, plot_height, export_width_px, legend_entrywidth)
+                    _render_client_png_download(
+                        fig_export,
+                        filename=fname,
+                        width_px=export_width_px,
+                        height_px=int(fig_export.layout.height or 800),
+                        scale=export_scale,
+                        button_label=label,
+                        plot_height=plot_height,
+                        legend_entrywidth=legend_entrywidth,
+                        plot_index=idx,
+                        manual_legend=export_manual_legend,
+                        legend_font_size_px=export_legend_font_size_px,
+                    )
+
     st.plotly_chart(fig_x, use_container_width=bool(use_auto_width), config=download_config)
     st.markdown("<div style='height:36px'></div>", unsafe_allow_html=True)
     st.plotly_chart(fig_r, use_container_width=bool(use_auto_width), config=download_config)
@@ -935,7 +979,7 @@ def main():
     export_xr = st.sidebar.checkbox("X/R", value=False, key="export_fulllegend_xr")
     enable_browser_export = st.sidebar.checkbox(
         "Enable browser PNG download",
-        value=False,
+        value=True,
         help="Uses Plotly.js in the browser (works on Streamlit Cloud; requires access to https://cdn.plot.ly).",
         key="export_fulllegend_enable_browser",
     )
