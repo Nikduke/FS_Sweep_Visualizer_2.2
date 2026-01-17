@@ -830,8 +830,6 @@ def main():
             "scale": 4,
         }
     }
-    if not enable_spline:
-        download_config["modeBarButtonsToRemove"] = ["toImage"]
 
     # Cases / filters
     df_r = data.get(seq[0])
